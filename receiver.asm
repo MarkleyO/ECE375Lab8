@@ -21,6 +21,7 @@
 .def	mpr = r16				; Multi-Purpose Register
 .def	data = r17
 .def	lastTrans = r18
+.def	lastDir = r22
 
 .equ	WskrR = 0				; Right Whisker Input Bit
 .equ	WskrL = 1				; Left Whisker Input Bit
@@ -30,9 +31,9 @@
 .equ	EngDirL = 6				; Left Engine Direction Bit
 
 .equ WTime = 100			; Time to wait in wait loop 
-.def waitcnt = r20			; Wait Loop Counter
-//.def ilcnt = r18			; Inner Loop Counter
-.def olcnt = r19			; Outer Loop Counter
+.def waitcnt = r19			; Wait Loop Counter
+.def ilcnt = r20			; Inner Loop Counter
+.def olcnt = r21			; Outer Loop Counter
 
 .equ	BotAddress = $1A;(Enter your robot's address here (8 bits))
 
@@ -57,17 +58,16 @@
 		rjmp 	INIT			; Reset interrupt
 
 .org	$0002					;- Left whisker
-		ldi mpr, (1<<0)
+		rcall HitLeft
 		reti
 
 .org	$0004					;- Right whisker
-		ldi mpr, (1<<1)
+		rcall HitRight
 		reti
 
 .org	$003C					;- USART1 receive
 		rjmp Receive	
 		
-
 .org	$0046					; End of Interrupt Vectors
 
 ;***********************************************************
@@ -104,21 +104,16 @@ INIT:
 	ldi mpr, (0<<UMSEL1)|(0<<UPM11)|(0<<UPM10)|(1<<USBS1)|(1<<UCSZ10)|(1<<UCSZ11) ;Set frame format: 8 data bits, 2 stop bits
 	sts UCSR1C, mpr
 
-	//ldi mpr, 
-	//sts UCSR1B, mpr
-
 	ldi lastTrans, $00
+	ldi lastDir, $00
 	
 	sei	
 		
 	;External Interrupts
-	;ldi mpr, $03 ;Set the External Interrupt Mask
-	;out EIMSK, mpr
-	;ldi mpr, (1<<ISC11)|(0<<ISC10)|(1<<ISC01)|(0<<ISC00) ;Set the Interrupt Sense Control to falling edge detection
-	;sts EICRA, mpr
-
-	//ldi mpr, 0b11111111
-	//out PORTB, mpr
+	ldi mpr, $03 ;Set the External Interrupt Mask
+	out EIMSK, mpr
+	ldi mpr, (1<<ISC11)|(0<<ISC10)|(1<<ISC01)|(0<<ISC00) ;Set the Interrupt Sense Control to falling edge detection
+	sts EICRA, mpr
 
 	;Other
 
@@ -134,6 +129,9 @@ MAIN:
 ;***********************************************************
 ;*	Functions and Subroutines
 ;***********************************************************
+;------------------------------------------------------------
+;Receive
+;------------------------------------------------------------
 Receive:
 				clr mpr
 				clr data
@@ -148,6 +146,7 @@ checkMovFwd:	ldi mpr, 0b10110000
 				brne checkMovBck
 				ldi mpr, MovFwd
 				out PORTB, mpr
+				ldi lastDir, MovFwd
 				rjmp end
 
 checkMovBck:	ldi mpr, 0b10000000
@@ -155,6 +154,7 @@ checkMovBck:	ldi mpr, 0b10000000
 				brne checkTurnR
 				ldi mpr, MovBck
 				out PORTB, mpr
+				ldi lastDir, MovBck
 				rjmp end
 
 checkTurnR:		ldi mpr, 0b10100000
@@ -162,6 +162,7 @@ checkTurnR:		ldi mpr, 0b10100000
 				brne checkTurnL
 				ldi mpr, TurnR
 				out PORTB, mpr
+				ldi lastDir, TurnL
 				rjmp end
 
 checkTurnL:		ldi mpr, 0b10010000
@@ -169,6 +170,7 @@ checkTurnL:		ldi mpr, 0b10010000
 				brne checkHalt
 				ldi mpr, TurnL
 				out PORTB, mpr
+				ldi lastDir, TurnR
 				rjmp end
 
 checkHalt:		ldi mpr, 0b11001000
@@ -176,6 +178,7 @@ checkHalt:		ldi mpr, 0b11001000
 				brne checkFutureUse
 				ldi mpr, Halt
 				out PORTB, mpr
+				ldi lastDir, Halt
 				rjmp end
 
 checkFutureUse:	ldi mpr, 0b11111000
@@ -186,11 +189,9 @@ checkFutureUse:	ldi mpr, 0b11111000
 
 end:			mov lastTrans, data
 				reti
-
-
-
-
-/*
+;------------------------------------------------------------
+;Wait
+;------------------------------------------------------------
 Wait:
 		push	waitcnt			; Save wait register
 		push	ilcnt			; Save ilcnt register
@@ -209,7 +210,91 @@ ILoop:	dec		ilcnt			; decrement ilcnt
 		pop		ilcnt		; Restore ilcnt register
 		pop		waitcnt		; Restore wait register
 		ret				; Return from subroutine
-*/
+;------------------------------------------------------------
+;HitLeft
+;------------------------------------------------------------
+HitLeft:
+			cli
+
+			push mpr   ; Save mpr register
+			push waitcnt   ; Save wait register
+			in  mpr, SREG ; Save program state
+			push mpr   ;
+
+			ldi  mpr, MovBck ; Load Move Backward command
+			out  PORTB, mpr ; Send command to port
+			ldi  waitcnt, WTime ; Wait for 1 second
+			rcall Wait   ; Call wait function
+
+			ldi  mpr, TurnR ; Load Turn Left Command
+			out  PORTB, mpr ; Send command to port
+			ldi  waitcnt, WTime ; Wait for 1 second
+			rcall Wait   ; Call wait function
+			
+			out PORTB, lastDir
+
+			ldi mpr, 0b11111111 
+			out EIFR, mpr ;pushes to register 
+			
+			rcall EmptyUSART
+			
+			pop  mpr  ; Restore program state
+			out  SREG, mpr ;
+			pop  waitcnt  ; Restore wait register
+			pop  mpr  ; Restore mpr
+
+			sei
+leftEnd:	reti
+
+
+
+
+;------------------------------------------------------------
+;HitRight
+;------------------------------------------------------------
+HitRight:
+			cli
+
+			push mpr   ; Save mpr register
+			push waitcnt   ; Save wait register
+			in  mpr, SREG ; Save program state
+			push mpr   ;
+
+			ldi  mpr, MovBck ; Load Move Backward command
+			out  PORTB, mpr ; Send command to port
+			ldi  waitcnt, WTime ; Wait for 1 second
+			rcall Wait   ; Call wait function
+
+			ldi  mpr, TurnL ; Load Turn Left Command
+			out  PORTB, mpr ; Send command to port
+			ldi  waitcnt, WTime ; Wait for 1 second
+			rcall Wait   ; Call wait function
+			
+			out PORTB, lastDir
+
+			ldi mpr, 0b11111111 
+			out EIFR, mpr ;pushes to register 
+			
+			rcall EmptyUSART
+			
+			pop  mpr  ; Restore program state
+			out  SREG, mpr ;
+			pop  waitcnt  ; Restore wait register
+			pop  mpr  ; Restore mpr
+
+			sei
+rightEnd:	reti
+
+;------------------------------------------------------------
+;EmptyUSART
+;------------------------------------------------------------
+EmptyUSART:
+			lds mpr, UCSR1A
+			sbrs mpr, RXC1
+			ret
+			lds mpr, UDR1
+			rjmp EmptyUSART	
+
 ;***********************************************************
 ;*	Stored Program Data
 ;***********************************************************
