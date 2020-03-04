@@ -20,6 +20,7 @@
 ;***********************************************************
 .def	mpr = r16				; Multi-Purpose Register
 .def	data = r17
+.def	lastTrans = r18
 
 .equ	WskrR = 0				; Right Whisker Input Bit
 .equ	WskrL = 1				; Left Whisker Input Bit
@@ -30,7 +31,7 @@
 
 .equ WTime = 100			; Time to wait in wait loop 
 .def waitcnt = r20			; Wait Loop Counter
-.def ilcnt = r18			; Inner Loop Counter
+//.def ilcnt = r18			; Inner Loop Counter
 .def olcnt = r19			; Outer Loop Counter
 
 .equ	BotAddress = $1A;(Enter your robot's address here (8 bits))
@@ -55,13 +56,13 @@
 .org	$0000					; Beginning of IVs
 		rjmp 	INIT			; Reset interrupt
 
-;.org	$0002					;- Left whisker
-;		ldi mpr, (1<<0)
-;		reti
+.org	$0002					;- Left whisker
+		ldi mpr, (1<<0)
+		reti
 
-;.org	$0004					;- Right whisker
-;		ldi mpr, (1<<1)
-;		reti
+.org	$0004					;- Right whisker
+		ldi mpr, (1<<1)
+		reti
 
 .org	$003C					;- USART1 receive
 		rjmp Receive	
@@ -85,36 +86,39 @@ INIT:
 	ldi mpr, (0<<EngEnL)|(0<<EngEnR)|(0<<EngDirR)|(0<<EngDirL)
 	out PORTB, mpr
 
-	ldi mpr, (0<<WskrL)|(0<<WskrR)
+	ldi mpr, (0<<PD2)|(0<<WskrL)|(0<<WskrR)
 	out DDRD, mpr
 	ldi mpr, (1<<WskrL)|(1<<WskrR)
 	out PORTD, mpr
 
 	;USART1
-	ldi mpr, $00 ;Set baudrate at 2400bps
-	sts UBRR1L, mpr
-	ldi mpr, $18
+	ldi mpr, high(832)
 	sts UBRR1H, mpr
-
-	ldi mpr, (1<<RXCIE1)|(1<<RXEN1)|(0<<UCSZ12) ;Enable receiver and enable receive interrupts
+	ldi mpr, low(832) ;Set baudrate at 2400bps
+	sts UBRR1L, mpr
+	
+	ldi mpr, (1<<U2X1)
+	sts UCSR1A, mpr
+	ldi mpr, (1<<RXEN1)|(1<<RXCIE1)|(0<<UCSZ12) ;Enable receiver and enable receive interrupts
 	sts UCSR1B, mpr
 	ldi mpr, (0<<UMSEL1)|(0<<UPM11)|(0<<UPM10)|(1<<USBS1)|(1<<UCSZ10)|(1<<UCSZ11) ;Set frame format: 8 data bits, 2 stop bits
 	sts UCSR1C, mpr
 
-		
-		
+	//ldi mpr, 
+	//sts UCSR1B, mpr
+
+	ldi lastTrans, $00
+	
+	sei	
 		
 	;External Interrupts
-	ldi mpr, $03 ;Set the External Interrupt Mask
-	out EIMSK, mpr
-	ldi mpr, (1<<ISC11)|(0<<ISC10)|(1<<ISC01)|(0<<ISC00) ;Set the Interrupt Sense Control to falling edge detection
-	sts EICRA, mpr
+	;ldi mpr, $03 ;Set the External Interrupt Mask
+	;out EIMSK, mpr
+	;ldi mpr, (1<<ISC11)|(0<<ISC10)|(1<<ISC01)|(0<<ISC00) ;Set the Interrupt Sense Control to falling edge detection
+	;sts EICRA, mpr
 
-	ldi mpr, 0b11111111
-	out PORTB, mpr
-
-
-	sei
+	//ldi mpr, 0b11111111
+	//out PORTB, mpr
 
 	;Other
 
@@ -123,45 +127,70 @@ INIT:
 ;***********************************************************
 MAIN:
 	;TODO: ???
-	
-	;Receive:
-	;	ldi mpr, UCSR1A
-	;	rol mpr
-	;	brcc next
-	;	lds mpr, UDR1
-	;	out PORTB, mpr
-	;ldi waitcnt, WTime
-	;ldi mpr, 0b11111111
-	;out PORTB, mpr
-	;rcall Wait
-	;ldi mpr, 0b00000000
-	;out PORTB, mpr
-	;rcall Wait
 
 	rjmp	MAIN
-	
-;	USART_Receive:
-;		push	mpr
-;		in		r17, UDR1
-;		pop		mpr
 		
 
 ;***********************************************************
 ;*	Functions and Subroutines
 ;***********************************************************
 Receive:
-	ldi mpr, 0b00000000
-	out PORTB, mpr
+				clr mpr
+				clr data
+				lds data, UDR1
 
-	;lds data, UDR1
-	;out PORTB, data
-	;rcall Wait
+checkHandshake: ldi mpr, BotAddress
+				cp mpr, lastTrans
+				brne end
 
-	;ldi mpr, 0b00000011 ; Write logical one to INT0 and INT1
-	;out EIFR, mpr
-	reti
+checkMovFwd:	ldi mpr, 0b10110000
+				cp data, mpr
+				brne checkMovBck
+				ldi mpr, MovFwd
+				out PORTB, mpr
+				rjmp end
+
+checkMovBck:	ldi mpr, 0b10000000
+				cp data, mpr
+				brne checkTurnR
+				ldi mpr, MovBck
+				out PORTB, mpr
+				rjmp end
+
+checkTurnR:		ldi mpr, 0b10100000
+				cp data, mpr
+				brne checkTurnL
+				ldi mpr, TurnR
+				out PORTB, mpr
+				rjmp end
+
+checkTurnL:		ldi mpr, 0b10010000
+				cp data, mpr
+				brne checkHalt
+				ldi mpr, TurnL
+				out PORTB, mpr
+				rjmp end
+
+checkHalt:		ldi mpr, 0b11001000
+				cp data, mpr
+				brne checkFutureUse
+				ldi mpr, Halt
+				out PORTB, mpr
+				rjmp end
+
+checkFutureUse:	ldi mpr, 0b11111000
+				cp data, mpr
+				//brne end
 
 
+
+end:			mov lastTrans, data
+				reti
+
+
+
+
+/*
 Wait:
 		push	waitcnt			; Save wait register
 		push	ilcnt			; Save ilcnt register
@@ -180,6 +209,7 @@ ILoop:	dec		ilcnt			; decrement ilcnt
 		pop		ilcnt		; Restore ilcnt register
 		pop		waitcnt		; Restore wait register
 		ret				; Return from subroutine
+*/
 ;***********************************************************
 ;*	Stored Program Data
 ;***********************************************************
