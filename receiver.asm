@@ -22,6 +22,7 @@
 .def	data = r17
 .def	lastTrans = r18
 .def	lastDir = r22
+.def	freezeCount = r23
 
 .equ	WskrR = 0				; Right Whisker Input Bit
 .equ	WskrL = 1				; Left Whisker Input Bit
@@ -30,7 +31,7 @@
 .equ	EngDirR = 5				; Right Engine Direction Bit
 .equ	EngDirL = 6				; Left Engine Direction Bit
 
-.equ WTime = 100			; Time to wait in wait loop 
+.equ WTime = 100			; Time to wait in wait loop ; set to 500 to make 5 s
 .def waitcnt = r19			; Wait Loop Counter
 .def ilcnt = r20			; Inner Loop Counter
 .def olcnt = r21			; Outer Loop Counter
@@ -86,7 +87,7 @@ INIT:
 	ldi mpr, (0<<EngEnL)|(0<<EngEnR)|(0<<EngDirR)|(0<<EngDirL)
 	out PORTB, mpr
 
-	ldi mpr, (0<<PD2)|(0<<WskrL)|(0<<WskrR)
+	ldi mpr, (0<<PD2)|(0<<WskrL)|(0<<WskrR)|(1<<PD3)
 	out DDRD, mpr
 	ldi mpr, (1<<WskrL)|(1<<WskrR)
 	out PORTD, mpr
@@ -99,13 +100,14 @@ INIT:
 	
 	ldi mpr, (1<<U2X1)
 	sts UCSR1A, mpr
-	ldi mpr, (1<<RXEN1)|(1<<RXCIE1)|(0<<UCSZ12) ;Enable receiver and enable receive interrupts
+	ldi mpr, (1<<TXEN1)|(1<<RXEN1)|(1<<RXCIE1)|(0<<UCSZ12) ;Enable receiver and enable receive interrupts
 	sts UCSR1B, mpr
 	ldi mpr, (0<<UMSEL1)|(0<<UPM11)|(0<<UPM10)|(1<<USBS1)|(1<<UCSZ10)|(1<<UCSZ11) ;Set frame format: 8 data bits, 2 stop bits
 	sts UCSR1C, mpr
 
 	ldi lastTrans, $00
-	ldi lastDir, $00
+	ldi lastDir, $00;0b01100000
+	ldi freezeCount, $00
 	
 	sei	
 		
@@ -136,6 +138,24 @@ Receive:
 				clr mpr
 				clr data
 				lds data, UDR1
+
+checkRecFrZ:	ldi mpr, 0b01010101
+				cp data, mpr
+				brne checkHandshake
+				inc freezeCount
+				cpi freezeCount, 3
+				breq dis
+				ldi mpr, Halt
+				out PORTB, mpr
+				ldi lastDir, Halt
+				ldi  waitcnt, WTime
+				rcall Wait
+				rcall Wait
+				rcall Wait
+				rjmp end
+
+dis:			rcall Disable
+
 
 checkHandshake: ldi mpr, BotAddress
 				cp mpr, lastTrans
@@ -175,15 +195,16 @@ checkTurnL:		ldi mpr, 0b10010000
 
 checkHalt:		ldi mpr, 0b11001000
 				cp data, mpr
-				brne checkFutureUse
+				brne end;checkSendFrZ
 				ldi mpr, Halt
 				out PORTB, mpr
 				ldi lastDir, Halt
 				rjmp end
 
-checkFutureUse:	ldi mpr, 0b11111000
+checkSendFrZ:	ldi mpr, 0b11111000
 				cp data, mpr
-				//brne end
+				brne end
+				rcall SendFreeze
 
 
 
@@ -246,9 +267,6 @@ HitLeft:
 			sei
 leftEnd:	reti
 
-
-
-
 ;------------------------------------------------------------
 ;HitRight
 ;------------------------------------------------------------
@@ -294,6 +312,39 @@ EmptyUSART:
 			ret
 			lds mpr, UDR1
 			rjmp EmptyUSART	
+
+;------------------------------------------------------------
+;Disable
+;------------------------------------------------------------
+Disable:
+
+infLoop:
+			ldi mpr, 0b11110000
+			out PORTB, mpr
+			ldi  waitcnt, WTime
+			rcall Wait
+			ldi mpr, 0b00000000
+			out PORTB, mpr
+			ldi  waitcnt, WTime
+			rcall Wait
+			rjmp infLoop
+
+			reti
+
+;------------------------------------------------------------
+;SendFreeze:
+;------------------------------------------------------------
+
+SendFreeze:
+transmitting:
+				lds mpr, UCSR1A
+				sbrs mpr, UDRE1
+				rjmp transmitting
+				ldi mpr, 0b01010101
+				sts UDR1, mpr
+
+
+				ret
 
 ;***********************************************************
 ;*	Stored Program Data
