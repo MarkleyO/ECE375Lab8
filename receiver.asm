@@ -147,11 +147,12 @@ checkRecFrZ:	ldi mpr, 0b01010101
 				breq dis
 				ldi mpr, Halt
 				out PORTB, mpr
-				ldi lastDir, Halt
+				;ldi lastDir, Halt
 				ldi  waitcnt, WTime
 				rcall Wait
 				rcall Wait
 				rcall Wait
+				out PORTB, lastDir
 				rjmp end
 
 dis:			rcall Disable
@@ -182,7 +183,7 @@ checkTurnR:		ldi mpr, 0b10100000
 				brne checkTurnL
 				ldi mpr, TurnR
 				out PORTB, mpr
-				ldi lastDir, TurnL
+				ldi lastDir, TurnR
 				rjmp end
 
 checkTurnL:		ldi mpr, 0b10010000
@@ -190,12 +191,12 @@ checkTurnL:		ldi mpr, 0b10010000
 				brne checkHalt
 				ldi mpr, TurnL
 				out PORTB, mpr
-				ldi lastDir, TurnR
+				ldi lastDir, TurnL
 				rjmp end
 
 checkHalt:		ldi mpr, 0b11001000
 				cp data, mpr
-				brne end;checkSendFrZ
+				brne checkSendFrZ
 				ldi mpr, Halt
 				out PORTB, mpr
 				ldi lastDir, Halt
@@ -335,7 +336,10 @@ infLoop:
 ;SendFreeze:
 ;------------------------------------------------------------
 
-SendFreeze:
+SendFreeze:	
+				ldi mpr, (1<<TXEN1)|(0<<RXEN1)|(1<<RXCIE1)|(0<<UCSZ12) ;Enable receiver and enable receive interrupts
+				sts UCSR1B, mpr
+
 transmitting:
 				lds mpr, UCSR1A
 				sbrs mpr, UDRE1
@@ -343,7 +347,12 @@ transmitting:
 				ldi mpr, 0b01010101
 				sts UDR1, mpr
 
+				ldi waitcnt, 10
+				rcall Wait
 
+				ldi mpr, (1<<TXEN1)|(1<<RXEN1)|(1<<RXCIE1)|(0<<UCSZ12) ;Enable receiver and enable receive interrupts
+				sts UCSR1B, mpr
+				
 				ret
 
 ;***********************************************************
